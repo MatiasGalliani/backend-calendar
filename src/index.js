@@ -3,20 +3,26 @@ import cors from "cors";
 import { PrismaClient } from "@prisma/client";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
+import path from "path";
+import { fileURLToPath } from "url";
 
 dotenv.config();
 
 const app = express();
 const prisma = new PrismaClient();
 
-// Configurazione del transportador SMTP con nodemailer
+// Obtener la ruta base del proyecto (solución para entornos de despliegue)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Configuración del transportador SMTP con nodemailer
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,      // ex: smtp.gmail.com
-  port: Number(process.env.SMTP_PORT),// ex: 587
-  secure: false,                     // false per STARTTLS
+  host: process.env.SMTP_HOST,
+  port: Number(process.env.SMTP_PORT),
+  secure: false, // STARTTLS
   auth: {
-    user: process.env.SMTP_USER,     // il tuo email
-    pass: process.env.SMTP_PASS,     // la tua password per l'app
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
   },
 });
 
@@ -29,25 +35,19 @@ app.get("/", (req, res) => {
 
 /**
  * GET /availability?date=ISO_DATE[&view=admin]
- *
- * - Se viene passato view=admin, ritorna: { timeSlots: [...] }
- * - Altrimenti (vista booking), ritorna: { availableTimes: [...] }
  */
 app.get("/availability", async (req, res) => {
   const { date, view } = req.query;
   if (!date) return res.status(400).json({ error: "Data richiesta" });
-  
+
   try {
-    // Recupera la disponibilità per la data dal database
     const availability = await prisma.availability.findUnique({
       where: { date: new Date(date) },
     });
 
     if (view === "admin") {
-      // Per la vista admin, ritorna direttamente i timeSlots impostati
       return res.json({ timeSlots: availability ? availability.timeSlots : [] });
     } else {
-      // Per la vista booking: usa la disponibilità dell'admin, oppure un intervallo predefinito
       const timeSlots = availability
         ? availability.timeSlots
         : [
@@ -55,7 +55,6 @@ app.get("/availability", async (req, res) => {
             { from: "14:00", to: "17:00" },
           ];
 
-      // Funzione per espandere gli intervalli in orari discreti (assumendo slot orari)
       const expandTimeSlots = (timeSlots) => {
         const times = [];
         timeSlots.forEach((slot) => {
@@ -69,14 +68,12 @@ app.get("/availability", async (req, res) => {
       };
 
       const allTimes = expandTimeSlots(timeSlots);
-
-      // Recupera le prenotazioni per la data
       const bookings = await prisma.booking.findMany({
         where: { date: new Date(date) },
       });
       const reservedTimes = bookings.map((b) => b.time);
-
       const availableTimes = allTimes.filter((time) => !reservedTimes.includes(time));
+
       return res.json({ availableTimes });
     }
   } catch (error) {
@@ -87,20 +84,12 @@ app.get("/availability", async (req, res) => {
 
 /**
  * POST /availability
- *
- * Riceve nel body JSON:
- * { date: ISO_DATE, timeSlots: [{ from: "09:00", to: "11:00" }, ...] }
- *
- * Aggiorna (o crea) la disponibilità per una determinata data.
  */
 app.post("/availability", async (req, res) => {
   const { date, timeSlots } = req.body;
-  if (!date || !timeSlots) {
-    return res.status(400).json({ error: "Data o timeSlots mancanti" });
-  }
+  if (!date || !timeSlots) return res.status(400).json({ error: "Data o timeSlots mancanti" });
 
   try {
-    // Upsert: se esiste, aggiorna, altrimenti crea una nuova entry
     const availability = await prisma.availability.upsert({
       where: { date: new Date(date) },
       update: { timeSlots },
@@ -115,41 +104,27 @@ app.post("/availability", async (req, res) => {
 
 /**
  * POST /bookings
- *
- * Riceve nel body JSON:
- * { name, email, date, time }
- *
- * Crea una prenotazione e invia una notifica email.
  */
 app.post("/bookings", async (req, res) => {
   const { name, email, date, time } = req.body;
-
   if (!name || !email || !date || !time) {
     return res.status(400).json({ error: "Tutti i campi sono obbligatori" });
   }
 
   try {
-    // Verifica se esiste già una prenotazione per la stessa data e orario
     const existingBooking = await prisma.booking.findFirst({
       where: { date: new Date(date), time },
     });
-    if (existingBooking) {
-      return res.status(400).json({ error: "Questo orario è già prenotato" });
-    }
+    if (existingBooking) return res.status(400).json({ error: "Questo orario è già prenotato" });
 
     const newBooking = await prisma.booking.create({
-      data: {
-        name,
-        email,
-        date: new Date(date),
-        time,
-      },
+      data: { name, email, date: new Date(date), time },
     });
 
-    // Invio dell'email di notifica
+    // Envío de email
     await transporter.sendMail({
       from: '"CreditPlan" <no-reply@creditplan.com>',
-      to: "it.creditplan@gmail.com", // Modifica con l'email di destinazione desiderata
+      to: "it.creditplan@gmail.com",
       subject: "Appuntamento confermato - inviato da €ugenio IA",
       text: `Gentile utente,
 
@@ -159,15 +134,10 @@ Questo messaggio è stato inviato da €ugenio IA.
 
 Cordiali saluti,
 €ugenio IA`,
-      html: `<p>Gentile utente,</p>
-<p>Il tuo appuntamento è stato confermato per il <strong>${new Date(date).toLocaleDateString()}</strong> alle <strong>${time}</strong>.</p>
-<p>Questo messaggio è stato inviato da <strong>€ugenio IA</strong>.</p>
-<p>Cordiali saluti,<br/>€ugenio IA</p>
-<img src="cid:signatureImage" alt="Firma €ugenio IA" style="width:100px; margin-top:10px;"/>`,
       attachments: [
         {
           filename: "eugenio.jpg",
-          path: "C:/Users/matia/Desktop/Creditplan/react project calendar/backend-calendar/assets/logo_eugenio.png", // Assicurati che la path sia corretta
+          path: path.join(__dirname, "assets", "logo_eugenio.png"),
           cid: "signatureImage",
         },
       ],
@@ -182,7 +152,6 @@ Cordiali saluti,
 
 /**
  * GET /bookings
- * (Opzionale) Recupera tutte le prenotazioni.
  */
 app.get("/bookings", async (req, res) => {
   try {
@@ -194,7 +163,8 @@ app.get("/bookings", async (req, res) => {
   }
 });
 
+// Configurar el puerto para producción
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () =>
-  console.log(`Server in esecuzione su http://localhost:${PORT}`)
-);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server in esecuzione su http://0.0.0.0:${PORT}`);
+});
