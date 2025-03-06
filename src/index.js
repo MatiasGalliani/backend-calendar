@@ -135,12 +135,12 @@ Questo messaggio è stato inviato da €ugenio IA.
 Cordiali saluti,
 €ugenio IA`,
       attachments: [
-        {
-          filename: "eugenio.jpg",
-          path: path.join(__dirname, "assets", "logo_eugenio.png"),
-          cid: "signatureImage",
-        },
-      ],
+  {
+    filename: "logo_eugenio.png",
+    path: "https://raw.githubusercontent.com/MatiasGalliani/backend-calendar/main/assets/logo_eugenio.png",
+    cid: "signatureImage",
+  },
+],
     });
 
     res.json({ message: "Prenotazione confermata e email inviata", booking: newBooking });
