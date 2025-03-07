@@ -3,8 +3,6 @@ import cors from "cors";
 import { PrismaClient } from "@prisma/client";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
-import path from "path";
-import { fileURLToPath } from "url";
 
 dotenv.config();
 
@@ -163,8 +161,87 @@ app.get("/bookings", async (req, res) => {
   }
 });
 
+/**
+ * POST /register
+ *
+ * Recibe en el body: { nome, cognome, email, password }.
+ * Verifica si el usuario ya existe; si no, hashea la contraseña con bcrypt y crea el usuario en la base de datos.
+ * Responde con un mensaje de éxito y, opcionalmente, el usuario creado.
+ */
+app.post("/register", async (req, res) => {
+    const { nome, cognome, email, password } = req.body;
+    if (!nome || !cognome || !email || !password) {
+      return res.status(400).json({ error: "Tutti i campi sono obbligatori" });
+    }
+  
+    try {
+      // Verifica si el usuario ya existe
+      const existingUser = await prisma.user.findUnique({ where: { email } });
+      if (existingUser) {
+        return res.status(409).json({ error: "Utente già registrato" });
+      }
+  
+      // Hashea la contraseña con bcrypt (10 rounds)
+      const hashedPassword = await bcrypt.hash(password, 10);
+  
+      // Crea el usuario en la base de datos
+      // Asumimos que el modelo User cuenta al menos con email, password y (opcionalmente) name.
+      // Aquí se almacena el nombre completo concatenando nome y cognome.
+      const newUser = await prisma.user.create({
+        data: {
+          email,
+          password: hashedPassword,
+          name: `${nome} ${cognome}`,
+        },
+      });
+  
+      return res.json({ message: "Registrazione avvenuta con successo", user: newUser });
+    } catch (error) {
+      console.error("Error in /register:", error);
+      res.status(500).json({ error: "Errore nel server durante la registrazione" });
+    }
+  });
+
+/**
+ * POST /login
+ *
+ * Recibe en el body: { email, password }
+ * Busca el usuario en la base de datos, compara la contraseña usando bcrypt y, si es válida, genera un token JWT.
+ */
+app.post("/login", async (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email y password son requeridos" });
+    }
+  
+    try {
+      // Asumiendo que en el esquema Prisma el modelo se llama "user" y el email es único
+      const user = await prisma.user.findUnique({ where: { email } });
+      if (!user) {
+        return res.status(401).json({ error: "Credenciales inválidas" });
+      }
+  
+      // Compara la contraseña ingresada con la hasheada en la base de datos
+      const validPassword = await bcrypt.compare(password, user.password);
+      if (!validPassword) {
+        return res.status(401).json({ error: "Credenciales inválidas" });
+      }
+  
+      // Genera el JWT usando una clave secreta definida en tu .env
+      const token = jwt.sign(
+        { id: user.id, email: user.email },
+        process.env.JWT_SECRET || "default_secret",
+        { expiresIn: "1h" }
+      );
+      return res.json({ token });
+    } catch (error) {
+      console.error("Error en /login:", error);
+      res.status(500).json({ error: "Error en el servidor" });
+    }
+  });
+
 // Configurar el puerto para producción
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server in esecuzione su http://0.0.0.0:${PORT}`);
-});
+app.listen(PORT, () =>
+  console.log(`Server in esecuzione su http://localhost:${PORT}`)
+);
